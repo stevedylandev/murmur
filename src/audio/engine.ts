@@ -21,9 +21,16 @@ export const DEFAULT_SYNTH_PARAMS: SynthParams = {
 	chorus: 0.45,
 };
 
+export interface NoteOpts {
+	attack?: number;
+	release?: number;
+	bypassRateLimit?: boolean;
+}
+
 export interface AudioEngine {
 	kind: 'midi' | 'synth';
-	noteOn(note: number, velocity: number, durationMs: number): void;
+	noteOn(note: number, velocity: number, durationMs: number, opts?: NoteOpts): void;
+	setModulation?(value: number): void;
 	setVolume?(v: number): void;
 	setSynthParams?(p: Partial<SynthParams>): void;
 	listOutputs?(): MidiOutputInfo[];
@@ -45,6 +52,7 @@ class SynthEngine implements AudioEngine {
 	private master: GainNode;
 	private padBus: GainNode;
 	private wetBus: GainNode;
+	private morph: BiquadFilterNode;
 	private active: PadVoice[] = [];
 	private params: SynthParams = { ...DEFAULT_SYNTH_PARAMS };
 	private lastNoteAt = 0;
@@ -64,9 +72,21 @@ class SynthEngine implements AudioEngine {
 		this.wetBus = this.ctx.createGain();
 		this.wetBus.gain.value = this.params.chorus;
 
+		this.morph = this.ctx.createBiquadFilter();
+		this.morph.type = 'lowpass';
+		this.morph.Q.value = 0.4;
+		this.morph.frequency.value = 1200;
+		this.morph.connect(this.padBus);
+
 		this.buildChorus(this.padBus, this.wetBus);
 		this.padBus.connect(this.master);
 		this.wetBus.connect(this.master);
+	}
+
+	setModulation(value: number) {
+		const v = Math.max(0, Math.min(1, value));
+		const target = 350 + v * v * 5500;
+		this.morph.frequency.setTargetAtTime(target, this.ctx.currentTime, 0.15);
 	}
 
 	setSynthParams(p: Partial<SynthParams>) {
@@ -106,12 +126,16 @@ class SynthEngine implements AudioEngine {
 		this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
 	}
 
-	noteOn(note: number, velocity: number) {
+	noteOn(note: number, velocity: number, _durationMs: number, opts?: NoteOpts) {
 		const nowMs = performance.now();
-		if (nowMs - this.lastNoteAt < this.minNoteGapMs) return;
-		this.lastNoteAt = nowMs;
+		if (!opts?.bypassRateLimit) {
+			if (nowMs - this.lastNoteAt < this.minNoteGapMs) return;
+			this.lastNoteAt = nowMs;
+		}
 
-		const { attack, release, cutoff, detune, polyphony } = this.params;
+		const { cutoff, detune, polyphony } = this.params;
+		const attack = opts?.attack ?? this.params.attack;
+		const release = opts?.release ?? this.params.release;
 
 		while (this.active.length >= polyphony) {
 			const oldest = this.active.shift()!;
@@ -172,7 +196,7 @@ class SynthEngine implements AudioEngine {
 		subOsc.stop(t + total + 0.1);
 		oscs.push(subOsc);
 
-		filter.connect(g).connect(this.padBus);
+		filter.connect(g).connect(this.morph);
 
 		const entry: PadVoice = { oscs, gain: g, filter, end: t + total };
 		this.active.push(entry);
@@ -192,6 +216,8 @@ class MidiEngine implements AudioEngine {
 	private access: MIDIAccess;
 	private outputId: string | null = null;
 	private channel = 0;
+	private lastModSendAt = 0;
+	private lastModValue = -1;
 
 	constructor(access: MIDIAccess) {
 		this.access = access;
@@ -227,6 +253,16 @@ class MidiEngine implements AudioEngine {
 		setTimeout(() => {
 			this.send([0x80 | this.channel, n, 0]);
 		}, durationMs);
+	}
+
+	setModulation(value: number) {
+		const now = performance.now();
+		if (now - this.lastModSendAt < 90) return;
+		const cc = Math.max(0, Math.min(127, Math.round(value * 127)));
+		if (cc === this.lastModValue) return;
+		this.lastModValue = cc;
+		this.lastModSendAt = now;
+		this.send([0xb0 | this.channel, 74, cc]);
 	}
 
 	dispose() {}

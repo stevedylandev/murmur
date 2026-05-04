@@ -1,15 +1,32 @@
-const TOPOLOGICAL_K = 7;
-const PERCEPTION = 70;
-const SEP_RANGE = 14;
-export const MAX_SPEED = 3.4;
-const MIN_SPEED = 2.2;
-const MAX_FORCE = 0.12;
+export interface BoidParams {
+	topologicalK: number;
+	perception: number;
+	sepRange: number;
+	maxSpeed: number;
+	minSpeed: number;
+	maxForce: number;
+	wSep: number;
+	wAlign: number;
+	wCoh: number;
+	wAttract: number;
+	wNoise: number;
+}
 
-const W_SEP = 1.8;
-const W_ALIGN = 1.4;
-const W_COH = 0.9;
-const W_ATTRACT = 0.06;
-const W_NOISE = 0.015;
+export const DEFAULT_BOID_PARAMS: BoidParams = {
+	topologicalK: 7,
+	perception: 70,
+	sepRange: 14,
+	maxSpeed: 3.4,
+	minSpeed: 2.2,
+	maxForce: 0.12,
+	wSep: 1.8,
+	wAlign: 1.4,
+	wCoh: 0.9,
+	wAttract: 0.06,
+	wNoise: 0.015,
+};
+
+export const boidParams: BoidParams = { ...DEFAULT_BOID_PARAMS };
 
 export class Boid {
 	x: number;
@@ -19,12 +36,16 @@ export class Boid {
 	ax = 0;
 	ay = 0;
 	lastCell = -1;
+	lastSepMag = 0;
+	lastAccentAt = 0;
 
 	constructor(W: number, H: number) {
 		this.x = Math.random() * W;
 		this.y = Math.random() * H;
 		const a = Math.random() * Math.PI * 2;
-		const s = MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED);
+		const s =
+			boidParams.minSpeed +
+			Math.random() * (boidParams.maxSpeed - boidParams.minSpeed);
 		this.vx = Math.cos(a) * s;
 		this.vy = Math.sin(a) * s;
 	}
@@ -38,6 +59,10 @@ export class Boid {
 	}
 
 	flock(candidates: Boid[], attractor: { x: number; y: number }) {
+		const p = boidParams;
+		const perception2 = p.perception * p.perception;
+		const sepRange2 = p.sepRange * p.sepRange;
+
 		const dists: { o: Boid; d2: number; dx: number; dy: number }[] = [];
 		for (let i = 0; i < candidates.length; i++) {
 			const o = candidates[i];
@@ -45,12 +70,12 @@ export class Boid {
 			const dx = o.x - this.x;
 			const dy = o.y - this.y;
 			const d2 = dx * dx + dy * dy;
-			if (d2 < PERCEPTION * PERCEPTION && d2 > 0) {
+			if (d2 < perception2 && d2 > 0) {
 				dists.push({ o, d2, dx, dy });
 			}
 		}
 		dists.sort((a, b) => a.d2 - b.d2);
-		const k = Math.min(TOPOLOGICAL_K, dists.length);
+		const k = Math.min(p.topologicalK, dists.length);
 
 		let alignX = 0,
 			alignY = 0;
@@ -67,7 +92,7 @@ export class Boid {
 			cohX += o.x;
 			cohY += o.y;
 
-			if (d2 < SEP_RANGE * SEP_RANGE) {
+			if (d2 < sepRange2) {
 				const d = Math.sqrt(d2);
 				const f = 1 / (d + 0.001);
 				sepX -= (dx / d) * f;
@@ -84,79 +109,99 @@ export class Boid {
 			alignY /= k;
 			const m = Math.hypot(alignX, alignY);
 			if (m > 0) {
-				alignX = (alignX / m) * MAX_SPEED - this.vx;
-				alignY = (alignY / m) * MAX_SPEED - this.vy;
+				alignX = (alignX / m) * p.maxSpeed - this.vx;
+				alignY = (alignY / m) * p.maxSpeed - this.vy;
 				const sm = Math.hypot(alignX, alignY);
-				if (sm > MAX_FORCE) {
-					alignX = (alignX / sm) * MAX_FORCE;
-					alignY = (alignY / sm) * MAX_FORCE;
+				if (sm > p.maxForce) {
+					alignX = (alignX / sm) * p.maxForce;
+					alignY = (alignY / sm) * p.maxForce;
 				}
-				fx += alignX * W_ALIGN;
-				fy += alignY * W_ALIGN;
+				fx += alignX * p.wAlign;
+				fy += alignY * p.wAlign;
 			}
 
 			cohX = cohX / k - this.x;
 			cohY = cohY / k - this.y;
 			const cm = Math.hypot(cohX, cohY);
 			if (cm > 0) {
-				cohX = (cohX / cm) * MAX_SPEED - this.vx;
-				cohY = (cohY / cm) * MAX_SPEED - this.vy;
+				cohX = (cohX / cm) * p.maxSpeed - this.vx;
+				cohY = (cohY / cm) * p.maxSpeed - this.vy;
 				const sm = Math.hypot(cohX, cohY);
-				if (sm > MAX_FORCE) {
-					cohX = (cohX / sm) * MAX_FORCE;
-					cohY = (cohY / sm) * MAX_FORCE;
+				if (sm > p.maxForce) {
+					cohX = (cohX / sm) * p.maxForce;
+					cohY = (cohY / sm) * p.maxForce;
 				}
-				fx += cohX * W_COH;
-				fy += cohY * W_COH;
+				fx += cohX * p.wCoh;
+				fy += cohY * p.wCoh;
 			}
 		}
 
 		if (sepCount > 0) {
 			const m = Math.hypot(sepX, sepY);
 			if (m > 0) {
-				sepX = (sepX / m) * MAX_SPEED - this.vx;
-				sepY = (sepY / m) * MAX_SPEED - this.vy;
+				sepX = (sepX / m) * p.maxSpeed - this.vx;
+				sepY = (sepY / m) * p.maxSpeed - this.vy;
 				const sm = Math.hypot(sepX, sepY);
-				if (sm > MAX_FORCE * 2) {
-					sepX = (sepX / sm) * MAX_FORCE * 2;
-					sepY = (sepY / sm) * MAX_FORCE * 2;
+				if (sm > p.maxForce * 2) {
+					sepX = (sepX / sm) * p.maxForce * 2;
+					sepY = (sepY / sm) * p.maxForce * 2;
 				}
-				fx += sepX * W_SEP;
-				fy += sepY * W_SEP;
+				fx += sepX * p.wSep;
+				fy += sepY * p.wSep;
+				this.lastSepMag = Math.hypot(sepX, sepY);
+			} else {
+				this.lastSepMag = 0;
 			}
+		} else {
+			this.lastSepMag = 0;
 		}
 
 		const adx = attractor.x - this.x;
 		const ady = attractor.y - this.y;
 		const ad = Math.hypot(adx, ady);
 		if (ad > 0) {
-			fx += (adx / ad) * W_ATTRACT;
-			fy += (ady / ad) * W_ATTRACT;
+			fx += (adx / ad) * p.wAttract;
+			fy += (ady / ad) * p.wAttract;
 		}
 
-		fx += (Math.random() - 0.5) * W_NOISE;
-		fy += (Math.random() - 0.5) * W_NOISE;
+		fx += (Math.random() - 0.5) * p.wNoise;
+		fy += (Math.random() - 0.5) * p.wNoise;
 
 		this.ax += fx;
 		this.ay += fy;
 	}
 
 	update() {
+		const p = boidParams;
 		this.vx += this.ax;
 		this.vy += this.ay;
 		const sp = Math.hypot(this.vx, this.vy);
-		if (sp > MAX_SPEED) {
-			this.vx = (this.vx / sp) * MAX_SPEED;
-			this.vy = (this.vy / sp) * MAX_SPEED;
-		} else if (sp < MIN_SPEED && sp > 0) {
-			this.vx = (this.vx / sp) * MIN_SPEED;
-			this.vy = (this.vy / sp) * MIN_SPEED;
+		if (sp > p.maxSpeed) {
+			this.vx = (this.vx / sp) * p.maxSpeed;
+			this.vy = (this.vy / sp) * p.maxSpeed;
+		} else if (sp < p.minSpeed && sp > 0) {
+			this.vx = (this.vx / sp) * p.minSpeed;
+			this.vy = (this.vy / sp) * p.minSpeed;
 		}
 		this.x += this.vx;
 		this.y += this.vy;
 		this.ax = 0;
 		this.ay = 0;
 	}
+}
+
+export function flockCoherence(boids: Boid[]): number {
+	let sumX = 0,
+		sumY = 0,
+		sumMag = 0;
+	for (let i = 0; i < boids.length; i++) {
+		const b = boids[i];
+		sumX += b.vx;
+		sumY += b.vy;
+		sumMag += Math.hypot(b.vx, b.vy);
+	}
+	if (sumMag === 0) return 0;
+	return Math.hypot(sumX, sumY) / sumMag;
 }
 
 export function drawBoid(ctx: CanvasRenderingContext2D, b: Boid) {
@@ -184,23 +229,31 @@ export function createSim(W: number, H: number) {
 		},
 	};
 
-	const count = Math.min(420, Math.floor((W * H) / 3200));
-	const cx0 = W / 2,
-		cy0 = H / 2;
-	for (let i = 0; i < count; i++) {
-		const b = new Boid(W, H);
-		const r = Math.random() * Math.min(W, H) * 0.25;
-		const a = Math.random() * Math.PI * 2;
-		b.x = cx0 + Math.cos(a) * r;
-		b.y = cy0 + Math.sin(a) * r;
-		state.boids.push(b);
+	function defaultCount(W: number, H: number) {
+		return Math.min(420, Math.floor((W * H) / 3200));
 	}
 
-	const cellSize = PERCEPTION;
+	function spawn(count: number) {
+		state.boids.length = 0;
+		const cx0 = state.W / 2,
+			cy0 = state.H / 2;
+		for (let i = 0; i < count; i++) {
+			const b = new Boid(state.W, state.H);
+			const r = Math.random() * Math.min(state.W, state.H) * 0.25;
+			const a = Math.random() * Math.PI * 2;
+			b.x = cx0 + Math.cos(a) * r;
+			b.y = cy0 + Math.sin(a) * r;
+			state.boids.push(b);
+		}
+	}
+
+	spawn(defaultCount(W, H));
+
 	const grid = new Map<string, Boid[]>();
 
 	function buildGrid() {
 		grid.clear();
+		const cellSize = boidParams.perception;
 		for (let i = 0; i < state.boids.length; i++) {
 			const b = state.boids[i];
 			const cx = Math.floor(b.x / cellSize);
@@ -216,6 +269,7 @@ export function createSim(W: number, H: number) {
 	}
 
 	function neighbors(b: Boid): Boid[] {
+		const cellSize = boidParams.perception;
 		const cx = Math.floor(b.x / cellSize);
 		const cy = Math.floor(b.y / cellSize);
 		const out: Boid[] = [];
@@ -256,5 +310,5 @@ export function createSim(W: number, H: number) {
 		state.H = H;
 	}
 
-	return { state, step, resize };
+	return { state, step, resize, spawn };
 }
